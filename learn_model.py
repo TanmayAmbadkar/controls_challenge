@@ -10,23 +10,77 @@ from sklearn.metrics import r2_score
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 import pickle
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 files = np.random.choice(os.listdir("./data"), size = 500, replace = False)
 X = []
 U = []
 Y = []
 
-for file in tqdm(files[:1000]):
-    rollout, target_lataccel_history, current_lataccel_history, state_history, action_history = run_rollout("./data/"+file, "zero", "./models/tinyphysics.onnx")
-    X.append(np.array([np.array([state_history[i].a_ego, state_history[i].v_ego, state_history[i].roll_lataccel, current_lataccel_history[i-1]]) for i in range(1, len(state_history))]))
-    U.append(np.array(action_history[1:]))
-    Y.append(np.array(current_lataccel_history[1:]))
+def process_file(file_path, controller):
+    """
+    Helper function that runs the rollout for a single file and
+    returns the computed X, U, Y arrays.
+    """
+    rollout, target_lataccel_history, current_lataccel_history, state_history, action_history = run_rollout(
+        file_path, controller, "./models/tinyphysics.onnx"
+    )
 
-for file in tqdm(files[:1000]):
-    rollout, target_lataccel_history, current_lataccel_history, state_history, action_history = run_rollout("./data/"+file, "pid", "./models/tinyphysics.onnx")
-    X.append(np.array([np.array([state_history[i].a_ego, state_history[i].v_ego, state_history[i].roll_lataccel, current_lataccel_history[i-1]]) for i in range(1, len(state_history))]))
-    U.append(np.array(action_history[1:]))
-    Y.append(np.array(current_lataccel_history[1:]))
+    # Create the feature array (X_item)
+    X_item = np.array([
+        [
+            state_history[i].a_ego,
+            state_history[i].v_ego,
+            state_history[i].roll_lataccel,
+            current_lataccel_history[i-1],
+        ]
+        for i in range(1, len(state_history))
+    ])
+
+    # Create the action array (U_item)
+    U_item = np.array(action_history[1:])
+
+    # Create the target array (Y_item)
+    Y_item = np.array(current_lataccel_history[1:])
+
+    return X_item, U_item, Y_item
+
+# Example usage
+files_subset = files[:1000]  # or however many you want to process
+X, U, Y = [], [], []
+
+with ThreadPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
+    # Submit a batch of futures
+    futures = {executor.submit(process_file, f"./data/{file}", "zero"): file for file in files_subset}
+
+    # Use as_completed to iterate over completed tasks
+    for future in tqdm(as_completed(futures), total=len(futures)):
+        file_name = futures[future]
+        try:
+            x_item, u_item, y_item = future.result()
+            X.append(x_item)
+            U.append(u_item)
+            Y.append(y_item)
+        except Exception as e:
+            print(f"Error processing {file_name}: {e}")
+
+
+with ThreadPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
+    # Submit a batch of futures
+    futures = {executor.submit(process_file, f"./data/{file}", "pid"): file for file in files_subset}
+
+    # Use as_completed to iterate over completed tasks
+    for future in tqdm(as_completed(futures), total=len(futures)):
+        file_name = futures[future]
+        try:
+            x_item, u_item, y_item = future.result()
+            X.append(x_item)
+            U.append(u_item)
+            Y.append(y_item)
+        except Exception as e:
+            print(f"Error processing {file_name}: {e}")
+
+
 
 X = np.vstack(X)
 U = np.hstack(U).reshape(-1, 1)
