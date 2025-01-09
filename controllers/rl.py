@@ -33,14 +33,14 @@ class Controller(BaseController):
     """
     def __init__(self):
         
-        self.model = PPO.load("ppo_tinyphysics1")
+        self.model = PPO.load("ppo_tinyphysics")
         self.lstm_states = None
         self.episode_starts = np.ones((1,), dtype=bool)
         net = SurrogateNet()
         net.load_state_dict(torch.load('model_weights.pth',  weights_only=True))
         self.prediction_model = net
         self.scale_X = pickle.load(open("scaler_X.pkl", "rb"))
-        self.scale_y = pickle.load(open("scaler_y.pkl", "rb"))
+        self.scale_y = pickle.load(open("scaler_Y.pkl", "rb"))
 
     def update(self, target_lataccel, current_lataccel, state, future_plan):
         
@@ -74,8 +74,8 @@ class Controller(BaseController):
         A_array = A
         B_array = B
         u_RL = action[0]
-        latacc_weight = 5
-        jerk_weight = 0
+        latacc_weight = 0
+        jerk_weight = 3
         rl_weight = 1
         u_min = -2
         u_max = 2

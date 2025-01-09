@@ -50,7 +50,7 @@ def process_file(file_path, controller):
 files_subset = files[:1000]  # or however many you want to process
 X, U, Y = [], [], []
 
-with ProcessPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
+with ProcessPoolExecutor(max_workers=32) as executor:  # Adjust max_workers as needed
     # Submit a batch of futures
     futures = {executor.submit(process_file, f"./data/{file}", "zero"): file for file in files_subset}
 
@@ -66,7 +66,7 @@ with ProcessPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as ne
             print(f"Error processing {file_name}: {e}")
 
 
-with ProcessPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
+with ProcessPoolExecutor(max_workers=32) as executor:  # Adjust max_workers as needed
     # Submit a batch of futures
     futures = {executor.submit(process_file, f"./data/{file}", "pid"): file for file in files_subset}
 
@@ -156,12 +156,9 @@ class SurrogateLightningModule(pl.LightningModule):
         x, y = batch  # batch is (features, targets)
         y_pred = self(x)
         loss = self.criterion(y_pred, y)
-        r2 = self.r2score(y_pred, y)
-
         # Log metrics
-        self.log("train_loss", loss, on_step=True, on_epoch=True)
-        self.log("train_r2", r2, on_step=True, on_epoch=True)
-
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar = True)
+       
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -173,12 +170,9 @@ class SurrogateLightningModule(pl.LightningModule):
         x, y = batch
         y_pred = self(x)
         loss = self.criterion(y_pred, y)
-        r2 = self.r2score(y_pred, y)
 
         # Log metrics
         self.log("val_loss", loss, on_step=False, on_epoch=True)
-        self.log("val_r2", r2, on_step=False, on_epoch=True)
-
         return loss
 
     def configure_optimizers(self):
@@ -198,7 +192,7 @@ model = SurrogateLightningModule(
 # Initialize a trainer
 trainer = pl.Trainer(
     max_epochs=100,
-    accelerator="auto",       # "cpu", "gpu", or "auto"
+    accelerator="gpu",       # "cpu", "gpu", or "auto"
     devices=1 if torch.cuda.is_available() else None,
 )
 
