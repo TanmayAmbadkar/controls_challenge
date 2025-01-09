@@ -10,9 +10,10 @@ from sklearn.metrics import r2_score
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 import pickle
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
+import pytorch_lightning as pl
 
-files = np.random.choice(os.listdir("./data"), size = 500, replace = False)
+files = np.random.choice(os.listdir("./data"), size = 1000, replace = False)
 X = []
 U = []
 Y = []
@@ -49,7 +50,7 @@ def process_file(file_path, controller):
 files_subset = files[:1000]  # or however many you want to process
 X, U, Y = [], [], []
 
-with ThreadPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
+with ProcessPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
     # Submit a batch of futures
     futures = {executor.submit(process_file, f"./data/{file}", "zero"): file for file in files_subset}
 
@@ -65,7 +66,7 @@ with ThreadPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as nee
             print(f"Error processing {file_name}: {e}")
 
 
-with ThreadPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
+with ProcessPoolExecutor(max_workers=8) as executor:  # Adjust max_workers as needed
     # Submit a batch of futures
     futures = {executor.submit(process_file, f"./data/{file}", "pid"): file for file in files_subset}
 
@@ -125,40 +126,118 @@ class SurrogateNet(nn.Module):
         x = self.fc4(x)
         return x
     
-    
+class SurrogateLightningModule(pl.LightningModule):
+    def __init__(self, input_dim=5, hidden_dim=128, lr=1e-5):
+        super().__init__()
+        # This saves hparams (nice for logging/hyperparameter tuning)
+        self.save_hyperparameters()
 
-net = SurrogateNet()
+        # Instantiate your original network
+        self.model = SurrogateNet(input_dim=input_dim, hidden_dim=hidden_dim)
 
-# print(net(XU_torch[:1])) # test the network with a single input
+        # Loss function
+        self.criterion = nn.MSELoss()
 
-# ---------------------------------------------------------
-# 3. Train the network
-# ---------------------------------------------------------
-optimizer = optim.Adam(net.parameters(), lr=0.00001)
-criterion = nn.MSELoss()
+        # Learning rate
+        self.lr = lr
+
+    def forward(self, x):
+        """Forward pass simply calls the SurrogateNet."""
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        """
+        - Receives a batch from the train DataLoader
+        - Forward pass
+        - Compute loss and metric
+        - Log them
+        - Return the loss (so Lightning can do the backprop)
+        """
+        x, y = batch  # batch is (features, targets)
+        y_pred = self(x)
+        loss = self.criterion(y_pred, y)
+        r2 = self.r2score(y_pred, y)
+
+        # Log metrics
+        self.log("train_loss", loss, on_step=True, on_epoch=True)
+        self.log("train_r2", r2, on_step=True, on_epoch=True)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        """
+        - Receives a batch from the val DataLoader
+        - Compute loss and metric
+        - Log them
+        """
+        x, y = batch
+        y_pred = self(x)
+        loss = self.criterion(y_pred, y)
+        r2 = self.r2score(y_pred, y)
+
+        # Log metrics
+        self.log("val_loss", loss, on_step=False, on_epoch=True)
+        self.log("val_r2", r2, on_step=False, on_epoch=True)
+
+        return loss
+
+    def configure_optimizers(self):
+        """
+        Define and return your optimizer(s) and LR scheduler(s).
+        """
+        optimizer = optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
 
 
-num_epochs = 100
-for epoch in range(num_epochs):
-    r2 = []
-    losses = []
-    for batch_x, batch_y in loader:
+model = SurrogateLightningModule(
+    input_dim=5,   # Or whatever matches your data
+    hidden_dim=128,
+    lr=1e-5
+)
+
+# Initialize a trainer
+trainer = pl.Trainer(
+    max_epochs=100,
+    accelerator="auto",       # "cpu", "gpu", or "auto"
+    devices=1 if torch.cuda.is_available() else None,
+)
+
+# Fit/train
+trainer.fit(
+    model,
+    train_dataloaders=loader,
+)
+
+# # print(net(XU_torch[:1])) # test the network with a single input
+
+# # ---------------------------------------------------------
+# # 3. Train the network
+# # ---------------------------------------------------------
+# optimizer = optim.Adam(net.parameters(), lr=0.00001)
+# criterion = nn.MSELoss()
+
+
+# num_epochs = 100
+# for epoch in range(num_epochs):
+#     r2 = []
+#     losses = []
+#     for batch_x, batch_y in loader:
         
-        y_pred = net(batch_x)
-        loss = criterion(y_pred, batch_y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        r2.append(r2_score(batch_y.detach().numpy(), y_pred.detach().numpy()))
-        losses.append(loss.item())
-    if (epoch+1) % 5 == 0:
-        print(f"Epoch {epoch+1:2d}/{num_epochs}, Loss = {np.mean(losses):.5f}")
-        print(f"Epoch {epoch+1:2d}/{num_epochs}, r2 score = {np.mean(r2):.5f}")
+#         y_pred = net(batch_x)
+#         loss = criterion(y_pred, batch_y)
+#         optimizer.zero_grad()
+#         loss.backward()
+#         optimizer.step()
+#         r2.append(r2_score(batch_y.detach().numpy(), y_pred.detach().numpy()))
+#         losses.append(loss.item())
+#     if (epoch+1) % 5 == 0:
+#         print(f"Epoch {epoch+1:2d}/{num_epochs}, Loss = {np.mean(losses):.5f}")
+#         print(f"Epoch {epoch+1:2d}/{num_epochs}, r2 score = {np.mean(r2):.5f}")
     
 
-# Now `net` is your trained surrogate model
+# # Now `net` is your trained surrogate model
 
-torch.save(net.state_dict(), 'model_weights.pth')
+torch.save(model.model.state_dict(), 'model_weights.pth')
 
 pickle.dump(scaler_X, open("scaler_X.pkl", "wb"))
 pickle.dump(scaler_Y, open("scaler_Y.pkl", "wb"))
