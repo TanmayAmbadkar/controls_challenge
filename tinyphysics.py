@@ -279,7 +279,7 @@ class TinyPhysicsSimulatorEnv(gym.Env):
       curr_state[4:] = np.concatenate([[target], target*np.ones(5)])
     
     # if self.simulator.step_idx < CONTROL_START_IDX:
-    reward = -0.001*(self.compute_cost(self.last_state)['total_cost'])
+    reward = -0.001*(self.simulator.compute_cost()['total_cost'])
     # else:
       # reward = -(self.last_cost - self.compute_cost()['total_cost'])
     if reward is np.nan:
