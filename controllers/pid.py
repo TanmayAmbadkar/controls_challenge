@@ -13,8 +13,11 @@ class Controller(BaseController):
     self.prev_error = 0
 
   def update(self, target_lataccel, current_lataccel, state, future_plan):
+
       error = (target_lataccel - current_lataccel)
-      self.error_integral += error
       error_diff = error - self.prev_error
+      self.error_integral += error
       self.prev_error = error
+      
+      
       return self.p * error + self.i * self.error_integral + self.d * error_diff
